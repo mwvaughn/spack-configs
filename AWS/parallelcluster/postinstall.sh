@@ -152,8 +152,13 @@ set_pcluster_defaults() {
 setup_spack() {
     cd "${install_path}"
 
+    echo "START: setup_spack"
+    echo "install_path: ${install_path}"
+    echo "SPACK_ROOT: ${SPACK_ROOT}"
+    echo "scheduler: ${scheduler}"
+
     # Load spack at login
-    if [ -z "${install_path}" ]
+    if [ -z "${SPACK_ROOT}" ]
     then
         case "${scheduler}" in
             slurm)
@@ -161,22 +166,34 @@ setup_spack() {
                 echo -e "\n# Spack setup from Github repo spack-configs" >> /opt/slurm/etc/slurm.csh
                 echo ". ${install_path}/share/spack/setup-env.sh &>/dev/null || true" >> /opt/slurm/etc/slurm.sh
                 echo ". ${install_path}/share/spack/setup-env.csh &>/dev/null || true" >> /opt/slurm/etc/slurm.csh
+                echo "MSG: slurm integration complete"
                 ;;
             *)
                 echo "WARNING: Spack will need to be loaded manually when ssh-ing to compute instances."
                 echo ". ${install_path}/share/spack/setup-env.sh" > /etc/profile.d/spack.sh
                 echo ". ${install_path}/share/spack/setup-env.csh" > /etc/profile.d/spack.csh
+                echo "MSG: shell integration complete"
         esac
     fi
+
+    echo "MSG: login config complete"
+    echo "MSG: adding --scope site"
 
     . "${install_path}/share/spack/setup-env.sh"
     spack compiler add --scope site
     spack external find --scope site
 
+    echo "MSG: scope added"
+
     # Remove all autotools/buildtools packages. These versions need to be managed by spack or it will
     # eventually end up in a version mismatch (e.g. when compiling gmp).
+    echo "MSG: remove autotools/buildtools"
     spack tags build-tools | xargs -I {} spack config --scope site rm packages:{}
     spack buildcache keys --install --trust
+    echo "MSG: removed autotools/buildtools"
+
+    echo "DONE: setup_spack"
+
 }
 
 install_packages() {
