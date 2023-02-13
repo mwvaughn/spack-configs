@@ -174,6 +174,8 @@ setup_spack() {
                 echo ". ${install_path}/share/spack/setup-env.csh" > /etc/profile.d/spack.csh
                 echo "MSG: shell integration complete"
         esac
+    else
+        echo "MSG: Spack appears to already be configured"
     fi
 
     echo "MSG: login config complete"
