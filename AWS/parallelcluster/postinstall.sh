@@ -7,6 +7,9 @@ set -e
 ##############################################################################################
 
 setup_variables() {
+
+    echo "START: setup_variables"
+
     # Install onto first shared storage device
     cluster_config="/opt/parallelcluster/shared/cluster-config.yaml"
     [ -f "${cluster_config}" ] && {
@@ -61,6 +64,16 @@ EOF
     spack_commit="45ea7c19e5"
 
     scriptdir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+    echo "VAR: cfn_cluster_user: ${cfn_cluster_user}"
+    echo "VAR: cfn_ebs_shared_dirs: ${cfn_ebs_shared_dirs}"
+    echo "VAR: scheduler: ${scheduler}"
+    echo "VAR: install_path: ${install_path}"
+    echo "VAR: spack_commit: ${spack_commit}"
+    echo "VAR: scriptdir: ${scriptdir}"
+
+    echo "END: setup_variables"
+
 }
 
 major_version() {
@@ -71,28 +84,40 @@ major_version() {
 # Make first user owner of Spack installation when script exits.
 fix_owner() {
     rc=$?
+    echo "START: fix_owner"
     if [ ${downloaded} -eq 0 ]
     then
         chown -R ${cfn_cluster_user}:${cfn_cluster_user} "${install_path}"
+        echo "CMD: chown -R ${cfn_cluster_user}:${cfn_cluster_user} ${install_path}"
     fi
+    echo "END: fix_owner"
     exit $rc
 }
 
 download_spack() {
+
+    echo "START: download_spack"
+    echo "VAR: SPACK_ROOT: ${SPACK_ROOT}"
+
     if [ -z "${SPACK_ROOT}" ]
     then
         [ -d ${install_path} ] || \
             if [ -n "${spack_branch}" ]
             then
+                echo "MSG: installing from ${spack_branch}"
                 git clone https://github.com/spack/spack -b ${spack_branch} ${install_path}
             elif [ -n "${spack_commit}" ]
             then
+                echo "MSG: installing from ${spack_commit}"
                 git clone https://github.com/spack/spack ${install_path}
                 cd ${install_path} && git checkout ${spack_commit}
             fi
+        echo "END: download_spack"
         return 0
     else
         # Let the script know we did not download spack, so the owner will not be fixed on exit.
+        echo "WARN: Did not download Spack"
+        echo "END: download_spack"
         return 1
     fi
 }
@@ -130,6 +155,9 @@ download_packages_yaml() {
 }
 
 set_pcluster_defaults() {
+
+    echo "START: set_pcluster_defaults"
+    
     # Set versions of pre-installed software in packages.yaml
     SLURM_VERSION=$(. /etc/profile && sinfo --version | cut -d' ' -f 2 | sed -e 's?\.?-?g')
     LIBFABRIC_MODULE=$(. /etc/profile && module avail libfabric 2>&1 | grep libfabric | head -n 1 | xargs )
@@ -147,9 +175,17 @@ set_pcluster_defaults() {
     for f in mirrors modules config; do
         curl -Ls https://raw.githubusercontent.com/spack/spack-configs/main/AWS/parallelcluster/${f}.yaml -o ${install_path}/etc/spack/${f}.yaml
     done
+    
+    echo "END: set_pcluster_defaults"
+
 }
 
 setup_spack() {
+
+    echo "START: setup_spack"
+    echo "VAR: SPACK_ROOT: ${SPACK_ROOT}"
+    echo "VAR: scheduler: ${scheduler}"
+
     cd "${install_path}"
 
     # Load spack at login
@@ -157,10 +193,12 @@ setup_spack() {
     then
         case "${scheduler}" in
             slurm)
+                echo "MSG: Integrating with SLURM"
                 echo -e "\n# Spack setup from Github repo spack-configs" >> /opt/slurm/etc/slurm.sh
                 echo -e "\n# Spack setup from Github repo spack-configs" >> /opt/slurm/etc/slurm.csh
                 echo ". ${install_path}/share/spack/setup-env.sh &>/dev/null || true" >> /opt/slurm/etc/slurm.sh
                 echo ". ${install_path}/share/spack/setup-env.csh &>/dev/null || true" >> /opt/slurm/etc/slurm.csh
+                echo "MSG: Integrated with SLURM"
                 ;;
             *)
                 echo "WARNING: Spack will need to be loaded manually when ssh-ing to compute instances."
@@ -169,19 +207,30 @@ setup_spack() {
         esac
     fi
 
+    echo "MSG: Adding site scope"
     . "${install_path}/share/spack/setup-env.sh"
     spack compiler add --scope site
     spack external find --scope site
+    echo "MSG: Site scope added"
 
+    echo "MSG: Removing autotools/buildtools"
     # Remove all autotools/buildtools packages. These versions need to be managed by spack or it will
     # eventually end up in a version mismatch (e.g. when compiling gmp).
     spack tags build-tools | xargs -I {} spack config --scope site rm packages:{}
     spack buildcache keys --install --trust
+    echo "MSG: Removed autotools/buildtools"
+
+    echo "END: setup_spack"
+
 }
 
 install_packages() {
+
+    echo "START: install_packages"
+
     . /opt/slurm/etc/slurm.sh || . /etc/profile.d/spack.sh
 
+    echo "MSG: Installing gcc"
     # Compiler needed for all kinds of codes. It makes no sense not to install it.
     # Get gcc from buildcache
     spack install gcc
@@ -192,6 +241,7 @@ install_packages() {
 
     if [ "x86_64" == "$(architecture)" ]
     then
+        echo "MSG: Installing oneapi@latest & intel@latest"
         # Add oneapi@latest & intel@latest
         spack install intel-oneapi-compilers-classic
         bash -c ". "$(spack location -i intel-oneapi-compilers)/setvars.sh"; spack compiler add --scope site"
@@ -200,8 +250,12 @@ install_packages() {
     # Install any specs provided to the script.
     for spec in "$@"
     do
+        echo "MSG: Installing ${spec}"
         [ -z "${spec}" ] || spack install -U "${spec}"
     done
+
+    echo "END: install_packages"
+
 }
 
 if [ "3" != "$(major_version)" ]; then
@@ -221,6 +275,9 @@ echo "$(declare -pf)
     echo \"*** Spack setup completed ***\"
     rm -f ${tmpfile}
 " > ${tmpfile}
+
+# DEBUG: Copy the tempfile so we can debug against it
+cp ${tmpfile} "${install_path}"/installer.tmp
 
 nohup bash ${tmpfile} &> /var/log/spack-postinstall.log &
 disown -a
